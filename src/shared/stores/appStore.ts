@@ -30,26 +30,18 @@ export interface GenerationJob {
 
 export interface GenerationOptions {
   modelId: string
-  vertexCount: number
   remesh: 'quad' | 'triangle' | 'none'
   enableTexture: boolean
   textureResolution: number
-  octreeResolution: number
-  guidanceScale: number
-  seed: number
-  numInferenceSteps: number
+  modelParams: Record<string, any>
 }
 
 const DEFAULT_OPTIONS: GenerationOptions = {
-  modelId: 'sf3d',
-  vertexCount: 10000,
+  modelId: '',
   remesh: 'quad',
-  enableTexture: true,
+  enableTexture: false,
   textureResolution: 512,
-  octreeResolution: 380,
-  guidanceScale: 5.5,
-  seed: -1,
-  numInferenceSteps: 30,
+  modelParams: {},
 }
 
 interface AppState {
@@ -66,6 +58,8 @@ interface AppState {
   setSelectedImagePath: (path: string | null) => void
   selectedImagePreviewUrl: string | null
   setSelectedImagePreviewUrl: (url: string | null) => void
+  selectedImageData: string | null   // base64 content for drag & drop (when path is unavailable)
+  setSelectedImageData: (data: string | null) => void
 
   // Generation options
   generationOptions: GenerationOptions
@@ -74,16 +68,31 @@ interface AppState {
   meshStats: { vertices: number; triangles: number } | null
   setMeshStats: (stats: { vertices: number; triangles: number } | null) => void
 
-  // Workspace panel
-  workspacePanelOpen: boolean
-  toggleWorkspacePanel: () => void
-
   // Setup
-  setupStatus:   SetupStatus
-  setupProgress: SetupProgress | null
-  setupError:    string | null
-  checkSetup:    () => Promise<void>
-  runSetup:      () => Promise<void>
+  setupStatus:    SetupStatus
+  setupProgress:  SetupProgress | null
+  setupError:     string | null
+  defaultDataDir: string
+  checkSetup:     () => Promise<void>
+  runSetup:       () => Promise<void>
+  saveDataDir:    (baseDir: string) => Promise<void>
+
+  // Patch auto-update
+  patchUpdateReady: boolean
+  setPatchUpdateReady: (ready: boolean) => void
+
+  // Error modal
+  errorModal: string | null
+  showError: (message: string) => void
+  hideError: () => void
+
+  // Mesh URL history (undo/redo)
+  meshHistory: string[]
+  historyIndex: number
+  pushMeshUrl: (url: string) => void
+  undoMesh: () => void
+  redoMesh: () => void
+  clearMeshHistory: () => void
 
   // Actions
   initApp: () => Promise<void>
@@ -102,11 +111,17 @@ export const useAppStore = create<AppState>()(
       setupStatus: 'idle',
       setupProgress: null,
       setupError: null,
+      defaultDataDir: '',
 
       checkSetup: async () => {
         set({ setupStatus: 'checking' })
-        const { needed } = await window.electron.setup.check()
-        set({ setupStatus: needed ? 'needed' : 'done' })
+        const { needed, defaultDataDir } = await window.electron.setup.check()
+        set({ setupStatus: needed ? 'needed' : 'done', defaultDataDir })
+      },
+
+      saveDataDir: async (baseDir: string) => {
+        await window.electron.setup.saveDataDir(baseDir)
+        get().runSetup()
       },
 
       runSetup: async () => {
@@ -130,23 +145,58 @@ export const useAppStore = create<AppState>()(
         window.electron.setup.run()
       },
 
+      patchUpdateReady: false,
+      setPatchUpdateReady: (ready) => set({ patchUpdateReady: ready }),
+
+      errorModal: null,
+      showError: (message) => set({ errorModal: message }),
+      hideError: () => set({ errorModal: null }),
+
+      meshHistory: [],
+      historyIndex: -1,
+
+      pushMeshUrl: (url) => {
+        const { meshHistory, historyIndex } = get()
+        const next = [...meshHistory.slice(0, historyIndex + 1), url]
+        set({ meshHistory: next, historyIndex: next.length - 1 })
+      },
+
+      undoMesh: () => {
+        const { meshHistory, historyIndex } = get()
+        if (historyIndex <= 0) return
+        const newIndex = historyIndex - 1
+        set({ historyIndex: newIndex })
+        get().updateCurrentJob({ outputUrl: meshHistory[newIndex] })
+      },
+
+      redoMesh: () => {
+        const { meshHistory, historyIndex } = get()
+        if (historyIndex >= meshHistory.length - 1) return
+        const newIndex = historyIndex + 1
+        set({ historyIndex: newIndex })
+        get().updateCurrentJob({ outputUrl: meshHistory[newIndex] })
+      },
+
+      clearMeshHistory: () => set({ meshHistory: [], historyIndex: -1 }),
+
       currentJob: null,
       selectedImagePath: null,
       setSelectedImagePath: (path) => set({ selectedImagePath: path }),
       selectedImagePreviewUrl: null,
       setSelectedImagePreviewUrl: (url) => set({ selectedImagePreviewUrl: url }),
+      selectedImageData: null,
+      setSelectedImageData: (data) => set({ selectedImageData: data }),
       generationOptions: DEFAULT_OPTIONS,
       meshStats: null,
       setMeshStats: (stats) => set({ meshStats: stats }),
-      workspacePanelOpen: false,
-      toggleWorkspacePanel: () => set((s) => ({ workspacePanelOpen: !s.workspacePanelOpen })),
-
       initApp: async () => {
         set({ backendStatus: 'starting', backendError: null })
 
         window.electron.python.offCrashed()
-        window.electron.python.onCrashed(() => {
-          set({ backendStatus: 'error', apiUrl: '', backendError: 'FastAPI crashed unexpectedly' })
+        window.electron.python.onCrashed(({ code }) => {
+          const msg = `FastAPI process crashed unexpectedly (exit code: ${code ?? 'unknown'})`
+          set({ backendStatus: 'error', apiUrl: '', backendError: msg })
+          get().showError(msg)
         })
 
         try {
@@ -155,10 +205,9 @@ export const useAppStore = create<AppState>()(
           const { apiUrl } = await window.electron.app.info()
           set({ backendStatus: 'ready', apiUrl })
         } catch (err) {
-          set({
-            backendStatus: 'error',
-            backendError: err instanceof Error ? err.message : String(err),
-          })
+          const msg = err instanceof Error ? err.message : String(err)
+          set({ backendStatus: 'error', backendError: msg })
+          get().showError(msg)
         }
       },
 
@@ -178,7 +227,6 @@ export const useAppStore = create<AppState>()(
       name: 'modly-store',
       partialize: (state) => ({
         generationOptions: state.generationOptions,
-        workspacePanelOpen: state.workspacePanelOpen,
       }),
     }
   )

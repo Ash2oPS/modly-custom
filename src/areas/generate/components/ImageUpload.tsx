@@ -4,7 +4,7 @@ import { useGeneration } from '@shared/hooks/useGeneration'
 
 export default function ImageUpload(): JSX.Element {
   const { currentJob } = useGeneration()
-  const { setSelectedImagePath, selectedImagePreviewUrl, setSelectedImagePreviewUrl } = useAppStore()
+  const { setSelectedImagePath, selectedImagePreviewUrl, setSelectedImagePreviewUrl, setSelectedImageData } = useAppStore()
   const [isDragging, setIsDragging] = useState(false)
 
   const isGenerating = currentJob?.status === 'uploading' || currentJob?.status === 'generating'
@@ -12,6 +12,7 @@ export default function ImageUpload(): JSX.Element {
   const handleFileSelect = useCallback(async () => {
     const path = await window.electron.fs.selectImage()
     if (!path) return
+    setSelectedImageData(null)
     setSelectedImagePath(path)
 
     // Read via IPC → blob URL (file:// blocked when served from localhost in dev)
@@ -19,17 +20,32 @@ export default function ImageUpload(): JSX.Element {
     const byteArray = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
     const blob = new Blob([byteArray], { type: 'image/png' })
     setSelectedImagePreviewUrl(URL.createObjectURL(blob))
-  }, [setSelectedImagePath, setSelectedImagePreviewUrl])
+  }, [setSelectedImagePath, setSelectedImagePreviewUrl, setSelectedImageData])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
     const file = e.dataTransfer.files[0]
     if (!file || !file.type.startsWith('image/')) return
-    const url = URL.createObjectURL(file)
-    setSelectedImagePreviewUrl(url)
-    setSelectedImagePath((file as File & { path?: string }).path ?? null)
-  }, [setSelectedImagePath, setSelectedImagePreviewUrl])
+
+    setSelectedImagePreviewUrl(URL.createObjectURL(file))
+
+    const filePath = (file as File & { path?: string }).path
+    if (filePath) {
+      setSelectedImageData(null)
+      setSelectedImagePath(filePath)
+    } else {
+      // file.path unavailable (some Electron configs) — read directly via FileReader
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string
+        const base64 = dataUrl.split(',')[1]
+        setSelectedImageData(base64)
+        setSelectedImagePath('__blob__')
+      }
+      reader.readAsDataURL(file)
+    }
+  }, [setSelectedImagePath, setSelectedImagePreviewUrl, setSelectedImageData])
 
   return (
     <div className="flex flex-col p-4 gap-3">
@@ -50,11 +66,29 @@ export default function ImageUpload(): JSX.Element {
         `}
       >
         {selectedImagePreviewUrl ? (
-          <img
-            src={selectedImagePreviewUrl}
-            alt="Input"
-            className="w-full h-full object-cover"
-          />
+          <>
+            <img
+              src={selectedImagePreviewUrl}
+              alt="Input"
+              className="w-full h-full object-cover"
+            />
+            {!isGenerating && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setSelectedImagePath(null)
+                  setSelectedImagePreviewUrl(null)
+                  setSelectedImageData(null)
+                }}
+                className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/70 hover:bg-black/90 text-zinc-300 hover:text-white flex items-center justify-center transition-colors"
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            )}
+          </>
         ) : (
           <div className="flex flex-col items-center gap-2 text-zinc-600">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">

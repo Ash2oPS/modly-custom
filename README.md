@@ -67,9 +67,32 @@ Modly supports external AI model extensions. Each extension is a GitHub reposito
 
 ### Official extensions
 
-| Extension | Model |
-|-----------|-------|
-| [modly-hunyuan3d-mini-extension](https://github.com/lightningpixel/modly-hunyuan3d-mini-extension) | Hunyuan3D 2 Mini |
+| Extension | Model | URL |
+|-----------|-------|-----|
+| [modly-hunyuan3d-mini-extension](https://github.com/lightningpixel/modly-hunyuan3d-mini-extension) | Hunyuan3D 2 Mini | https://github.com/lightningpixel/modly-hunyuan3d-mini-extension |
+| [modly-hunyuan3d-mini-turbo-extension](https://github.com/lightningpixel/modly-hunyuan3d-mini-turbo-extension) | Hunyuan3D 2 Mini Turbo | https://github.com/lightningpixel/modly-hunyuan3d-mini-turbo-extension |
+| [modly-hunyuan3d-mini-fast-extension](https://github.com/lightningpixel/modly-hunyuan3d-mini-fast-extension) | Hunyuan3D 2 Mini Fast | https://github.com/lightningpixel/modly-hunyuan3d-mini-fast-extension |
+| [modly-triposg-extension](https://github.com/lightningpixel/modly-triposg-extension) | TripoSG | https://github.com/lightningpixel/modly-triposg-extension |
+
+### How to install an extension
+
+**1.** Go to the **Models** page and click **Install from GitHub**.
+
+![Install from GitHub](docs/install-from-github.png)
+
+**2.** Enter the HTTPS URL of the extension repository and confirm.
+
+![Enter extension URL](docs/install-extension.png)
+
+**3.** Once the extension is installed, download the model or one of its variants.
+
+![Install models](docs/install-models.png)
+
+---
+
+### Community 
+
+Join the [Discord server](https://discord.gg/BvjDCvS3yr) to stay up to date with the latest news, report bugs, and share feedback.
 
 ---
 
@@ -82,3 +105,13 @@ MIT License — see [LICENSE](LICENSE) for details.
 > Based on [Modly](https://github.com/lightningpixel/modly) by [Lightning Pixel](https://github.com/lightningpixel)
 
 This is a requirement of the MIT license attribution clause. Please keep this credit visible in your app's UI or documentation.
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=lightningpixel%2Fmodly&type=timeline&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lightningpixel/modly&type=timeline&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lightningpixel/modly&type=timeline&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lightningpixel/modly&type=timeline&legend=bottom-right" />
+ </picture>
+</a>

@@ -3,7 +3,9 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { setupIpcHandlers } from './ipc-handlers'
 import { PythonBridge } from './python-bridge'
-import { logger } from './logger'
+import { logger, archiveCurrentSession } from './logger'
+import { initAutoUpdater } from './updater'
+import { syncBuiltinExtensions } from './builtin-sync'
 
 let mainWindow: BrowserWindow | null = null
 let pythonBridge: PythonBridge | null = null
@@ -48,13 +50,17 @@ app.setName('Modly')
 
 process.on('uncaughtException', (err) => {
   logger.error(`Uncaught exception: ${err.stack ?? err.message}`)
+  mainWindow?.webContents.send('app:error', err.stack ?? err.message)
 })
 
 process.on('unhandledRejection', (reason) => {
-  logger.error(`Unhandled rejection: ${String(reason)}`)
+  const msg = String(reason)
+  logger.error(`Unhandled rejection: ${msg}`)
+  mainWindow?.webContents.send('app:error', msg)
 })
 
 app.whenReady().then(async () => {
+  archiveCurrentSession()
   logger.info(`App started — version ${app.getVersion()}`)
   electronApp.setAppUserModelId('com.modly.app')
 
@@ -65,10 +71,14 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // Sync built-in extensions from app resources to userData
+  syncBuiltinExtensions()
+
   // Start Python FastAPI backend
   pythonBridge = new PythonBridge()
   pythonBridge.setWindowGetter(() => mainWindow)
   setupIpcHandlers(pythonBridge, () => mainWindow)
+  initAutoUpdater(() => mainWindow)
 
   createWindow()
 
@@ -77,11 +87,15 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('window-all-closed', async () => {
-  await pythonBridge?.stop()
+app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', async () => {
-  await pythonBridge?.stop()
+app.on('before-quit', (event) => {
+  if (!pythonBridge) return
+  event.preventDefault()
+  pythonBridge.stop().finally(() => {
+    pythonBridge = null
+    app.quit()
+  })
 })

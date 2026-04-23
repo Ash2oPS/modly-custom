@@ -1,20 +1,148 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@shared/stores/appStore'
-import { FieldLabel, Tooltip } from '@shared/components/ui'
+import { useApi } from '@shared/hooks/useApi'
+import { FieldLabel, Tooltip, ConfirmModal } from '@shared/components/ui'
 
 import type { CatalogModel } from '../models'
-
-const QUALITY_PRESETS = [
-  { label: 'Low',    vertexCount: 5000  },
-  { label: 'Medium', vertexCount: 10000 },
-  { label: 'High',   vertexCount: 20000 },
-] as const
 
 const REMESH_OPTIONS = [
   { label: 'Quad',     value: 'quad'     },
   { label: 'Triangle', value: 'triangle' },
   { label: 'None',     value: 'none'     },
 ] as const
+
+// ─── Schema types ──────────────────────────────────────────────────────────────
+
+interface ParamSchema {
+  id: string
+  label: string
+  type: 'select' | 'float' | 'int'
+  default: any
+  min?: number
+  max?: number
+  step?: number
+  options?: { value: any; label: string }[]
+  tooltip?: string
+}
+
+// ─── Dynamic parameter renderers ───────────────────────────────────────────────
+
+function ShuffleIcon(): JSX.Element {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="17 1 21 5 17 9" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+      <polyline points="7 23 3 19 7 15" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </svg>
+  )
+}
+
+function SelectParam({ schema, value, onChange }: { schema: ParamSchema; value: any; onChange: (v: any) => void }): JSX.Element {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <FieldLabel label={schema.label} tooltip={schema.tooltip} />
+      <div className="flex gap-1.5">
+        {schema.options?.map((opt) => (
+          <button
+            key={String(opt.value)}
+            onClick={() => onChange(opt.value)}
+            className={`flex-1 py-1.5 text-xs rounded-lg transition-colors ${
+              value === opt.value
+                ? 'bg-accent text-white'
+                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function FloatParam({ schema, value, onChange }: { schema: ParamSchema; value: any; onChange: (v: any) => void }): JSX.Element {
+  const step = schema.step ?? 0.1
+  return (
+    <div className="flex flex-col gap-1.5">
+      <FieldLabel label={schema.label} tooltip={schema.tooltip} />
+      <div className="flex items-center gap-2">
+        <input
+          type="range"
+          min={schema.min}
+          max={schema.max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="flex-1 accent-violet-500"
+        />
+        <span className="text-xs tabular-nums text-zinc-300 w-10 text-right">
+          {Number(value).toFixed(step < 1 ? 1 : 0)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function IntInput({ value, onChange, placeholder, className }: { value: number; onChange: (v: number) => void; placeholder?: string; className: string }) {
+  const [text, setText] = useState(String(value))
+  const prevValue = useRef(value)
+  if (prevValue.current !== value && parseInt(text, 10) !== value) {
+    prevValue.current = value
+    setText(String(value))
+  }
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => {
+        const raw = e.target.value
+        if (raw !== '' && raw !== '-' && !/^-?\d+$/.test(raw)) return
+        setText(raw)
+        const n = parseInt(raw, 10)
+        if (!isNaN(n)) { prevValue.current = n; onChange(n) }
+      }}
+      className={className}
+    />
+  )
+}
+
+function IntParam({ schema, value, onChange }: { schema: ParamSchema; value: any; onChange: (v: any) => void }): JSX.Element {
+  const isSeed = schema.id === 'seed'
+  return (
+    <div className="flex flex-col gap-1.5">
+      <FieldLabel label={schema.label} tooltip={schema.tooltip} />
+      <div className="flex items-center gap-2">
+        <IntInput
+          value={value}
+          onChange={onChange}
+          placeholder={isSeed ? '-1 = random' : undefined}
+          className="w-full px-3 py-1.5 text-xs rounded-lg bg-zinc-900 border border-zinc-700/60 text-zinc-200 focus:outline-none focus:border-zinc-500"
+        />
+        {isSeed && (
+          <button
+            onClick={() => onChange(Math.floor(Math.random() * (schema.max ?? 2147483647)))}
+            title="Random seed"
+            className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
+          >
+            <ShuffleIcon />
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function DynamicParam({ schema, value, onChange }: { schema: ParamSchema; value: any; onChange: (v: any) => void }): JSX.Element | null {
+  switch (schema.type) {
+    case 'select': return <SelectParam schema={schema} value={value} onChange={onChange} />
+    case 'float':  return <FloatParam  schema={schema} value={value} onChange={onChange} />
+    case 'int':    return <IntParam    schema={schema} value={value} onChange={onChange} />
+    default:       return null
+  }
+}
 
 // ─── Custom model dropdown ────────────────────────────────────────────────────
 
@@ -151,41 +279,87 @@ function ModelSelect({ models, value, onChange }: ModelSelectProps): JSX.Element
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-const CUSTOM_MAX = 100_000
-
 export default function GenerationOptions(): JSX.Element {
-  const { generationOptions, setGenerationOptions, currentJob } = useAppStore()
+  const { generationOptions, setGenerationOptions, currentJob, apiUrl } = useAppStore()
   const [models, setModels] = useState<CatalogModel[]>([])
   const [textureResolutionRaw, setTextureResolutionRaw] = useState(
     String(generationOptions.textureResolution ?? 512)
   )
 
   const isDisabled = currentJob?.status === 'uploading' || currentJob?.status === 'generating'
+  const [showTextureWarning, setShowTextureWarning] = useState(false)
+
+  // ─── Dynamic params schema ─────────────────────────────────────────────────
+  const [schema, setSchema] = useState<ParamSchema[]>([])
+  const schemaCache = useRef<Record<string, ParamSchema[]>>({})
+
+  // Fetch schema when model changes
+  useEffect(() => {
+    const modelId = generationOptions.modelId
+    if (!modelId || !apiUrl) {
+      setSchema([])
+      return
+    }
+
+    // Use cache if available
+    if (schemaCache.current[modelId]) {
+      setSchema(schemaCache.current[modelId])
+      initDefaults(schemaCache.current[modelId])
+      return
+    }
+
+    fetch(`${apiUrl}/model/params?model_id=${encodeURIComponent(modelId)}`)
+      .then((res) => res.json())
+      .then((params: ParamSchema[]) => {
+        schemaCache.current[modelId] = params
+        setSchema(params)
+        initDefaults(params)
+      })
+      .catch(() => setSchema([]))
+  }, [generationOptions.modelId, apiUrl])
+
+  function initDefaults(params: ParamSchema[]) {
+    const current = generationOptions.modelParams
+    const defaults: Record<string, any> = {}
+    for (const p of params) {
+      if (!(p.id in current)) {
+        defaults[p.id] = p.default
+      }
+    }
+    if (Object.keys(defaults).length > 0) {
+      setGenerationOptions({ modelParams: { ...current, ...defaults } })
+    }
+  }
+
+  function setModelParam(id: string, value: any) {
+    setGenerationOptions({
+      modelParams: { ...generationOptions.modelParams, [id]: value },
+    })
+  }
+
+  // ─── Load models list ──────────────────────────────────────────────────────
+
+  const { getAllModelsStatus } = useApi()
 
   useEffect(() => {
-    window.electron.model.listDownloaded()
-      .then((list) => {
+    if (!apiUrl) return
+    getAllModelsStatus()
+      .then((statuses) => {
+        const list = statuses
+          .filter((s) => s.downloaded)
+          .map((s) => ({ id: s.id, name: s.name ?? s.id }))
         setModels(list)
-        if (list.length > 0 && !list.find((m) => m.id === generationOptions.modelId)) {
+        if (list.length === 0) {
+          setGenerationOptions({ modelId: '' })
+        } else if (!generationOptions.modelId || !list.find((m) => m.id === generationOptions.modelId)) {
           setGenerationOptions({ modelId: list[0].id })
         }
       })
       .catch(() => {})
-  }, [])
-
-  const currentQuality = QUALITY_PRESETS.find((p) => p.vertexCount === generationOptions.vertexCount)
-  const isCustomMode = !currentQuality
-  const [showCustom, setShowCustom] = useState(isCustomMode)
-  const [customRaw, setCustomRaw] = useState(String(generationOptions.vertexCount))
-
-  function commitCustomValue(raw: string) {
-    const parsed = parseInt(raw, 10)
-    const clamped = isNaN(parsed) ? 10000 : Math.max(1, Math.min(CUSTOM_MAX, parsed))
-    setCustomRaw(String(clamped))
-    setGenerationOptions({ vertexCount: clamped })
-  }
+  }, [apiUrl])
 
   return (
+    <>
     <div className={`flex flex-col px-4 pb-4 gap-3 ${isDisabled ? 'opacity-50 pointer-events-none' : ''}`}>
       <div className="h-px bg-zinc-800" />
       <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Options</h2>
@@ -199,72 +373,9 @@ export default function GenerationOptions(): JSX.Element {
         <ModelSelect
           models={models}
           value={generationOptions.modelId}
-          onChange={(id) => setGenerationOptions({ modelId: id })}
+          onChange={(id) => setGenerationOptions({ modelId: id, modelParams: {} })}
         />
       </div>
-
-      {/* Mesh quality — temporarily hidden for the communication video
-           (no effect on Hunyuan3D 2 Mini)
-      <div className="flex flex-col gap-1.5">
-        <FieldLabel
-          label="Mesh Quality"
-          tooltip="Controls the number of vertices in the generated mesh. Higher quality produces more detail but takes longer and uses more memory."
-        >
-          <span className="text-xs text-zinc-600">
-            {showCustom
-              ? `(${generationOptions.vertexCount.toLocaleString()} vertices)`
-              : `(${(generationOptions.vertexCount / 1000).toFixed(0)}k vertices)`
-            }
-          </span>
-        </FieldLabel>
-        <div className="flex gap-1.5">
-          {QUALITY_PRESETS.map((preset) => (
-            <button
-              key={preset.vertexCount}
-              onClick={() => {
-                setShowCustom(false)
-                setGenerationOptions({ vertexCount: preset.vertexCount })
-              }}
-              className={`flex-1 py-1.5 text-xs rounded-lg transition-colors ${
-                !showCustom && currentQuality?.vertexCount === preset.vertexCount
-                  ? 'bg-accent text-white'
-                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-              }`}
-            >
-              {preset.label}
-            </button>
-          ))}
-          <button
-            onClick={() => {
-              setShowCustom(true)
-              setCustomRaw(String(generationOptions.vertexCount))
-            }}
-            className={`flex-1 py-1.5 text-xs rounded-lg transition-colors ${
-              showCustom
-                ? 'bg-accent text-white'
-                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-            }`}
-          >
-            Custom
-          </button>
-        </div>
-        {showCustom && (
-          <div className="flex items-center gap-2 mt-0.5">
-            <input
-              type="number"
-              min={1}
-              max={CUSTOM_MAX}
-              value={customRaw}
-              onChange={(e) => setCustomRaw(e.target.value)}
-              onBlur={(e) => commitCustomValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') commitCustomValue(customRaw) }}
-              className="w-full px-3 py-1.5 text-xs rounded-lg bg-zinc-900 border border-zinc-700/60 text-zinc-200 focus:outline-none focus:border-zinc-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-            />
-            <span className="text-xs text-zinc-600 flex-shrink-0 whitespace-nowrap">max {(CUSTOM_MAX / 1000).toFixed(0)}k</span>
-          </div>
-        )}
-      </div>
-      */}
 
       {/* Remesh */}
       <div className="flex flex-col gap-1.5">
@@ -289,118 +400,15 @@ export default function GenerationOptions(): JSX.Element {
         </div>
       </div>
 
-      {/* Inference steps — Hunyuan models only */}
-      {generationOptions.modelId.startsWith('hunyuan') && (
-        <div className="flex flex-col gap-1.5">
-          <FieldLabel
-            label="Quality"
-            tooltip="Number of diffusion sampling steps. More steps = better geometry but slower generation."
-          />
-          <div className="flex gap-1.5">
-            {([
-              { label: 'Fast',     value: 10 },
-              { label: 'Balanced', value: 30 },
-              { label: 'High',     value: 50 },
-            ] as const).map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setGenerationOptions({ numInferenceSteps: opt.value })}
-                className={`flex-1 py-1.5 text-xs rounded-lg transition-colors ${
-                  generationOptions.numInferenceSteps === opt.value
-                    ? 'bg-accent text-white'
-                    : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Octree resolution — Hunyuan models only */}
-      {generationOptions.modelId.startsWith('hunyuan') && (
-        <div className="flex flex-col gap-1.5">
-          <FieldLabel
-            label="Mesh Resolution"
-            tooltip="Controls the octree resolution used during shape generation. Higher values produce a smoother, more detailed surface but use more VRAM and take longer."
-          />
-          <div className="flex gap-1.5">
-            {([
-              { label: 'Low',    value: 256 },
-              { label: 'Medium', value: 380 },
-              { label: 'High',   value: 512 },
-            ] as const).map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setGenerationOptions({ octreeResolution: opt.value })}
-                className={`flex-1 py-1.5 text-xs rounded-lg transition-colors ${
-                  generationOptions.octreeResolution === opt.value
-                    ? 'bg-accent text-white'
-                    : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Guidance Scale + Seed — Hunyuan models only */}
-      {generationOptions.modelId.startsWith('hunyuan') && (
-        <>
-          <div className="flex flex-col gap-1.5">
-            <FieldLabel
-              label="Guidance Scale"
-              tooltip="Controls how closely the model follows your image. Higher = more faithful to the reference, lower = more creative freedom. Recommended: 5–7."
-            />
-            <div className="flex items-center gap-2">
-              <input
-                type="range"
-                min={1}
-                max={10}
-                step={0.5}
-                value={generationOptions.guidanceScale}
-                onChange={(e) => setGenerationOptions({ guidanceScale: Number(e.target.value) })}
-                className="flex-1 accent-violet-500"
-              />
-              <span className="text-xs tabular-nums text-zinc-300 w-6 text-right">
-                {generationOptions.guidanceScale}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <FieldLabel
-              label="Seed"
-              tooltip="Random seed for reproducibility. Set to -1 for a random result each time, or enter a fixed value to reproduce a specific generation."
-            />
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={-1}
-                max={2147483647}
-                value={generationOptions.seed}
-                onChange={(e) => setGenerationOptions({ seed: parseInt(e.target.value) || -1 })}
-                className="w-full px-3 py-1.5 text-xs rounded-lg bg-zinc-900 border border-zinc-700/60 text-zinc-200 focus:outline-none focus:border-zinc-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              />
-              <button
-                onClick={() => setGenerationOptions({ seed: Math.floor(Math.random() * 2147483647) })}
-                title="Random seed"
-                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="17 1 21 5 17 9" />
-                  <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-                  <polyline points="7 23 3 19 7 15" />
-                  <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+      {/* Dynamic model params */}
+      {schema.map((param) => (
+        <DynamicParam
+          key={param.id}
+          schema={param}
+          value={generationOptions.modelParams[param.id] ?? param.default}
+          onChange={(val) => setModelParam(param.id, val)}
+        />
+      ))}
 
       {/* Separator */}
       <div className="flex items-center gap-2 pt-1">
@@ -416,7 +424,13 @@ export default function GenerationOptions(): JSX.Element {
           <button
             role="checkbox"
             aria-checked={generationOptions.enableTexture}
-            onClick={() => setGenerationOptions({ enableTexture: !generationOptions.enableTexture })}
+            onClick={() => {
+              if (!generationOptions.enableTexture) {
+                setShowTextureWarning(true)
+              } else {
+                setGenerationOptions({ enableTexture: false })
+              }
+            }}
             className={`ml-2 w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${
               generationOptions.enableTexture ? 'bg-accent' : 'bg-zinc-700'
             }`}
@@ -466,5 +480,20 @@ export default function GenerationOptions(): JSX.Element {
       </div>
 
     </div>
+
+    {showTextureWarning && (
+      <ConfirmModal
+        title="Texture generation is experimental"
+        description="This feature is still in development and may produce unexpected results, crash, or significantly slow down generation. Use at your own risk."
+        confirmLabel="Enable anyway"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          setGenerationOptions({ enableTexture: true })
+          setShowTextureWarning(false)
+        }}
+        onCancel={() => setShowTextureWarning(false)}
+      />
+    )}
+    </>
   )
 }
